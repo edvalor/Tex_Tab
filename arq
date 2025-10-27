@@ -1,0 +1,98 @@
+import os
+import pandas as pd
+import pdfplumber
+import tabula
+import camelot
+from PIL import Image
+import pytesseract
+import cv2
+import numpy as np
+import io
+
+def excel_or_csv_to_text(path, output_format="plain"):
+    # lê todas as sheets (se for xlsx) ou um CSV
+    if path.lower().endswith((".xls", ".xlsx")):
+        xls = pd.read_excel(path, sheet_name=None)  # dict: sheet -> df
+        results = {}
+        for sheet, df in xls.items():
+            results[sheet] = df_to_text(df, output_format)
+        return results
+    else:
+        df = pd.read_csv(path)
+        return {"sheet1": df_to_text(df, output_format)}
+
+def df_to_text(df, output_format="plain"):
+    # output_format: "plain" (tab-separated), "csv", "markdown"
+    if output_format == "csv":
+        return df.to_csv(index=False)
+    if output_format == "markdown":
+        return df.to_markdown(index=False)
+    # default plain (tab-separated)
+    return df.to_csv(sep="\t", index=False)
+
+def pdf_table_to_text_tabula(path, pages="all", output_format="plain"):
+    # usa tabula-py (Java) - bom para tabelas bem formadas
+    dfs = tabula.read_pdf(path, pages=pages, multiple_tables=True)
+    texts = []
+    for i, df in enumerate(dfs):
+        texts.append((f"table_{i+1}", df_to_text(df, output_format)))
+    return dict(texts)
+
+def pdf_table_to_text_pdfplumber(path, output_format="plain"):
+    # usa pdfplumber, bom quando tabula falha
+    results = {}
+    with pdfplumber.open(path) as pdf:
+        table_count = 0
+        for pageno, page in enumerate(pdf.pages, start=1):
+            tables = page.extract_tables()
+            for t in tables:
+                table_count += 1
+                df = pd.DataFrame(t[1:], columns=t[0]) if len(t) > 1 else pd.DataFrame(t)
+                results[f"page{pageno}_table{table_count}"] = df_to_text(df, output_format)
+    return results
+
+def image_table_to_text_ocr(path, output_format="plain", preprocess=True):
+    # extrai texto inteiro (pode conter tabelas); para tabelas mais estruturadas, precisa post-processar
+    img = cv2.imread(path)
+    if img is None:
+        raise ValueError("Imagem não encontrada ou formato inválido")
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    if preprocess:
+        # limiar adaptativo para melhorar OCR em fotos
+        gray = cv2.adaptiveThreshold(gray,255,cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                                     cv2.THRESH_BINARY,11,2)
+    pil_img = Image.fromarray(gray)
+    text = pytesseract.image_to_string(pil_img)
+    if output_format == "markdown":
+        # sem parse de tabela — só devolve texto em markdown code block
+        return "```\n" + text + "\n```"
+    return text
+
+def detect_and_extract(path, output_format="plain"):
+    ext = os.path.splitext(path)[1].lower()
+    if ext in (".csv", ".xls", ".xlsx"):
+        return excel_or_csv_to_text(path, output_format)
+    if ext == ".pdf":
+        # tenta tabula primeiro; se nada, usa pdfplumber
+        try:
+            out = pdf_table_to_text_tabula(path, output_format=output_format)
+            if out:
+                return out
+        except Exception as e:
+            # fallback
+            pass
+        try:
+            return pdf_table_to_text_pdfplumber(path, output_format=output_format)
+        except Exception as e:
+            return {"error": f"Falha ao extrair tabelas do PDF: {e}"}
+    if ext in (".png", ".jpg", ".jpeg", ".tiff", ".bmp"):
+        return {"ocr_text": image_table_to_text_ocr(path, output_format=output_format)}
+    return {"error": "Formato não suportado"}
+
+# Exemplo de uso:
+if __name__ == "__main__":
+    arquivo = "exemplo.pdf"  # substitua
+    resultado = detect_and_extract(arquivo, output_format="markdown")
+    # resultado é um dict: nome_da_tabela -> texto
+    for nome, texto in resultado.items():
+        print(f"--- {nome} ---\n{texto}\n\n")
