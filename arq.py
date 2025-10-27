@@ -1,3 +1,14 @@
+#Documentação necessaria:
+# ambiente Python
+#pip install pandas openpyxl tabula-py pdfplumber camelot-py[cv] pytesseract pillow opencv-python
+# tabula-py needs Java instalado (JRE/JDK).
+# camelot precisa de ghostscript e tk; em alguns sistemas precisa instalar extras via apt/brew.
+# pytesseract precisa do Tesseract-OCR instalado no sistema:
+#  - Ubuntu: sudo apt install tesseract-ocr
+#  - Windows: instalar binário do Tesseract e adicionar ao PATH
+
+
+
 import os
 import pandas as pd
 import pdfplumber
